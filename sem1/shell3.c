@@ -15,6 +15,7 @@
 
 int bckrgnd = 0;
 char konv = '\0';
+int pid = 0;
 
 void print() {
   const char* pwd = getcwd(NULL, 256);
@@ -289,7 +290,7 @@ void do_cmds(char ***cmds, int n) {
             return;
         }
     }
-    int pipefd[n - 1][2], pid;
+    int pipefd[n - 1][2];
     for (int i = 0; i < n; i++) {
         if (i != n - 1) {
             pipe(pipefd[i]);
@@ -341,7 +342,12 @@ void do_cmds(char ***cmds, int n) {
     }
 }
 
-void sl1() {}
+void sl1() {
+    if(pid != 0) {
+        kill(SIGINT, pid);
+        wait(NULL);
+    }
+}
 
 int main(void) {
     char ***cmds = NULL;
