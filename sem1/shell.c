@@ -5,11 +5,45 @@
 #include <string.h>
 #include <fcntl.h>
 
-int fd[2];
+#define ANSI_COLOR_RED     "\x1b[31;1m"
+#define ANSI_COLOR_GREEN   "\x1b[32;1m"
+#define ANSI_COLOR_YELLOW  "\x1b[33;1m"
+#define ANSI_COLOR_BLUE    "\x1b[34;1m"
+#define ANSI_COLOR_MAGENTA "\x1b[35;1m"
+#define ANSI_COLOR_CYAN    "\x1b[36;1m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
+
+int bckrgnd = 0;
+char konv = '\0';
+
+void print() {
+  const char* pwd = getcwd(NULL, 256);
+  const char* user = getenv("USER");
+  char host[256];
+  gethostname(host, 256);
+  printf(ANSI_COLOR_GREEN "%s@%s" ANSI_COLOR_RESET
+        ":" ANSI_COLOR_BLUE "%s" ANSI_COLOR_RESET
+        "$ ", user, host, pwd);
+  fflush(stdout);
+}
+
+void print1(char ***cmds) {
+  for (int i = 0; cmds[i] != NULL; i++) {
+      for (int j = 0; cmds[i][j] != NULL; j++) {
+          printf("%s", cmds[i][j]);
+      }
+      printf("\n");
+  }
+}
 
 char *get_word(char *end) {
     char *word = NULL;
     int i = 0, br = 0;
+    if (*end == '&') {
+        bckrgnd = 1;
+        read(0, end, 1);
+        return word;
+    }
     if (*end == '|') {
       return word;
     }
@@ -54,7 +88,7 @@ char *get_word(char *end) {
             *end = ' ';
             break;
         }
-        if (*end == '<' || *end == '>' || *end == '|') {
+        if ((*end == '<' || *end == '>' || *end == '|') && br != 2) {
             break;
         }
         word = (char *)realloc(word, (i + 2) * sizeof(char));
@@ -75,8 +109,11 @@ char *get_word(char *end) {
 }
 
 void free_3_arr(char ***cmds) {
+    if (cmds == NULL) {
+        return;
+    }
     for (int i = 0; cmds[i] != NULL; i++) {
-        for (int j = 0;cmds[i][j] != NULL; j++) {
+        for (int j = 0; cmds[i][j] != NULL; j++) {
             free(cmds[i][j]);
         }
         free(cmds[i]);
@@ -117,7 +154,12 @@ char **get_list(char *end) {
             }
         }
         words[i] = get_word(end);
+        if (bckrgnd == 1) {
+            words[i + 1] = NULL;
+            return words;
+        }
         if (*end == '|') {
+          words[i + 1] = NULL;
           return words;
         }
         if (words[i] == NULL) {
@@ -134,6 +176,7 @@ char **get_list(char *end) {
     return words;
 }
 
+
 char ***get_cmds(int *n) {
     char  ***cmds = NULL, end = '\0';
     int i = 0;
@@ -144,7 +187,11 @@ char ***get_cmds(int *n) {
             return NULL;
         }
         cmds[i] = get_list(&end);
-        printf("%d\n", end);
+        if (cmds[i] == NULL && end == '\n') {
+            free_3_arr(cmds);
+            *n = -1;
+            return NULL;
+        }
         if (cmds[i] == NULL) {
             perror("get_list");
             free_3_arr(cmds);
@@ -208,77 +255,83 @@ int redir(char **cmd) {
     return fd;
 }
 
-void do_cmd(char **cmd, char ***cmds) {
-    int fd1, fd2;
-    if(strcmp(cmd[0], "exit") == 0 || strcmp(cmd[0], "quit") == 0) {
-        free_3_arr(cmds);
-        exit(0);
-    }
-    if(cmd == NULL) {
-        free_3_arr(cmds);
-        exit(1);
-    }
-    if (fork() > 0) {
-        wait(NULL);
-        free_3_arr(cmds);
-    } else {
-        fd1 = redir(cmd);
-        fd2 = redir(cmd);
-        if (execvp(cmd[0], cmd) < 0) {
-            free_3_arr(cmds);
-            perror("exec failed");
-            close(fd1);
-            close(fd2);
-            exit(1);
-        }
-        if (fd1 != 0) {
-            close(fd1);
-        }
-        if (fd2 != 0) {
-            close(fd2);
-        }
-        exit(0);
-    }
-}
-
 void do_cmds(char ***cmds, int n) {
     int fd1, fd2;
-    fd1 = redir(cmds[0]);
-    fd2 = redir(cmds[n - 1]);
-    //pipe(fd);
-    printf("%d\n", n);
-    int pipefd[n][2], pid;
-    for(int i = 0; i < n; i++) {
-        pipe(pipefd[i]);
-        if ((pid = fork()) == 0) {
-            if (n == 1) {
-              if (execvp(cmds[0][0], cmds[0]) < 0) {
-                  free_3_arr(cmds);
-                  perror("exec failed");
-                  close(fd1);
-                  close(fd2);
-                  exit(1);
-              }
+    if (strcmp(cmds[0][0], "cd") == 0) {
+        char *home = getenv("HOME");
+        if (cmds[0][1] == NULL || strcmp(cmds[0][1] , "~") == 0) {
+            chdir(home);
+        } else {
+            chdir(cmds[0][1]);
+        }
+        return;
+    }
+    if (n == 1) {
+        if (fork() == 0) {
+            fd1 = redir(cmds[0]);
+            fd2 = redir(cmds[0]);
+            if (execvp(cmds[0][0], cmds[0]) < 0) {
+                free_3_arr(cmds);
+                perror("exec failed");
+                if (fd1 != 0 && fd1 != 1) {
+                    close(fd1);
+                }
+                if (fd2 != 0 && fd2 != 1) {
+                    close(fd2);
+                }
+                exit(1);
             }
-            if(i != 0) {
-              dup2(pipefd[i - 1][0], 0);
-              close(pipefd[i - 1][0]);
-              close(pipefd[i - 1][1]);
+        } else {
+            if (!bckrgnd) {
+                wait(NULL);
+            }
+            bckrgnd = 0;
+            return;
+        }
+    }
+    int pipefd[n - 1][2], pid;
+    for (int i = 0; i < n; i++) {
+        if (i != n - 1) {
+            pipe(pipefd[i]);
+        }
+        if ((pid = fork()) == 0) {
+            if (i == 0) {
+                fd1 = redir(cmds[i]);
+            } else if (i == n - 1) {
+                fd2 = redir(cmds[i]);
+            }
+            if (i != 0) {
+                dup2(pipefd[i - 1][0], 0);
             }
             if (i != n - 1) {
                 dup2(pipefd[i][1], 1);
             }
-            close(pipefd[i][0]);
-            close(pipefd[i][1]);
-            execvp(cmds[i][0], cmds[i]);
-            free_3_arr(cmds);
-            exit(0);
-        } else {
-          wait(NULL);
+            for (int j = 0; j < i + 1; j++) {
+                if (j == n - 1) {
+                    break;
+                }
+                close(pipefd[j][0]);
+                close(pipefd[j][1]);
+            }
+            if (execvp(cmds[i][0], cmds[i]) < 0) {
+                free_3_arr(cmds);
+                perror("exec failed");
+                      close(fd1);
+                      close(fd2);
+                exit(1);
+            }
         }
-//        dup2(fd[0], 0);
+    }
+    if (bckrgnd) {
+      n--;
+      bckrgnd = 0;
+    }
+    for (int i = 0; i < n; i ++) {
+      if (i != n - 1) {
         close(pipefd[i][0]);
         close(pipefd[i][1]);
+      }
+      wait(NULL);
     }
     if (fd1 != 0 && fd1 != 1) {
         close(fd1);
@@ -288,37 +341,31 @@ void do_cmds(char ***cmds, int n) {
     }
 }
 
-void print(char ***cmds) {
-  for (int i = 0; cmds[i] != NULL; i++) {
-    for (int j = 0; cmds[j] != NULL; j++){
-        printf("%s", cmds[i][j]);
-    }
-    printf("\n");
-  }
-}
+void sl1() {}
+
 int main(void) {
     char ***cmds = NULL;
     int n = 0;
+    signal(SIGINT, sl1);
     while (1) {
+        print();
         cmds = get_cmds(&n);
-//        print(cmds);
-        if (cmds == NULL) {
-            perror("something went wrong");
-            return 1;
+        if (n == -1) {
+          continue;
         }
-        if (strcmp(cmds[0][0], "quit") == 0 || strcmp(cmds[0][0], "exit") == 0) {
+        if (cmds[0] == NULL || cmds[0][0] == NULL) {
+            free_3_arr(cmds);
+            continue;
+//            perror("something went wrong");
+//            return 1;
+        }
+        if (strcmp(cmds[0][0], "quit") == 0 ||
+            strcmp(cmds[0][0], "exit") == 0) {
             free_3_arr(cmds);
             break;
         }
-        if (fork() == 0) {
-            do_cmds(cmds, n);
-            free_3_arr(cmds);
-            return 0;
-        } else {
-            wait(NULL);
-            free_3_arr(cmds);
-        }
+        do_cmds(cmds, n);
+        free_3_arr(cmds);
     }
     return 0;
 }
-
