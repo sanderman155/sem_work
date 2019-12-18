@@ -14,9 +14,7 @@
 #define ANSI_COLOR_RESET   "\x1b[0m"
 
 int bckrgnd = 0;
-int bckrgnd_n = 0;
 int pid = 0;
-int nwline = 0;
 
 void print() {
   char* pwd = getcwd(NULL, 256);
