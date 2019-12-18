@@ -14,27 +14,20 @@
 #define ANSI_COLOR_RESET   "\x1b[0m"
 
 int bckrgnd = 0;
-char konv = '\0';
+int bckrgnd_n = 0;
 int pid = 0;
+int nwline = 0;
 
 void print() {
-  const char* pwd = getcwd(NULL, 256);
-  const char* user = getenv("USER");
+  char* pwd = getcwd(NULL, 256);
+  char* user = getenv("USER");
   char host[256];
   gethostname(host, 256);
-  printf(ANSI_COLOR_GREEN "%s@%s" ANSI_COLOR_RESET
-        ":" ANSI_COLOR_BLUE "%s" ANSI_COLOR_RESET
+  printf(ANSI_COLOR_RED "%s@%s" ANSI_COLOR_RESET
+        ":" ANSI_COLOR_YELLOW "%s" ANSI_COLOR_RESET
         "$ ", user, host, pwd);
   fflush(stdout);
-}
-
-void print1(char ***cmds) {
-  for (int i = 0; cmds[i] != NULL; i++) {
-      for (int j = 0; cmds[i][j] != NULL; j++) {
-          printf("%s", cmds[i][j]);
-      }
-      printf("\n");
-  }
+  free(pwd);
 }
 
 char *get_word(char *end) {
@@ -46,7 +39,7 @@ char *get_word(char *end) {
         return word;
     }
     if (*end == '|') {
-      return word;
+        return word;
     }
     if (*end == '>' || *end == '<') {
         word = (char *)realloc(word, 2);
@@ -109,7 +102,7 @@ char *get_word(char *end) {
     return word;
 }
 
-void free_3_arr(char ***cmds) {
+void free_arr(char ***cmds) {
     if (cmds == NULL) {
         return;
     }
@@ -126,7 +119,7 @@ char **get_list(char *end) {
     char **words = NULL;
     ssize_t err = 0;
     int i;
-    if (read(1, end, 1) < 0) {
+    if (read(0, end, 1) < 0) {
         perror("read");
         return NULL;
     }
@@ -134,10 +127,6 @@ char **get_list(char *end) {
         words = (char **)realloc(words, (i + 2) * sizeof(char *));
         if (words == NULL) {
             perror("realloc");
-            for (int j = 0; j < i; j++) {
-                free(words[j]);
-            }
-            free(words);
             return NULL;
         }
         while (*end == ' ' || *end == '\t') {
@@ -189,13 +178,13 @@ char ***get_cmds(int *n) {
         }
         cmds[i] = get_list(&end);
         if (cmds[i] == NULL && end == '\n') {
-            free_3_arr(cmds);
+            free_arr(cmds);
             *n = -1;
             return NULL;
         }
         if (cmds[i] == NULL) {
             perror("get_list");
-            free_3_arr(cmds);
+            free_arr(cmds);
             return NULL;
         }
         i++;
@@ -205,13 +194,6 @@ char ***get_cmds(int *n) {
         cmds[i] = NULL;
     }
     return cmds;
-}
-
-void free_list(char **list) {
-    for (int i = 0; list[i] != NULL; i++) {
-        free(list[i]);
-    }
-    free(list);
 }
 
 void del_w(char **cmd, int n) {
@@ -272,7 +254,8 @@ void do_cmds(char ***cmds, int n) {
             fd1 = redir(cmds[0]);
             fd2 = redir(cmds[0]);
             if (execvp(cmds[0][0], cmds[0]) < 0) {
-                free_3_arr(cmds);
+                bckrgnd = 0;
+                free_arr(cmds);
                 perror("exec failed");
                 if (fd1 != 0 && fd1 != 1) {
                     close(fd1);
@@ -283,7 +266,7 @@ void do_cmds(char ***cmds, int n) {
                 exit(1);
             }
         } else {
-            if (!bckrgnd) {
+            if (bckrgnd == 0) {
                 wait(NULL);
             }
             bckrgnd = 0;
@@ -315,7 +298,7 @@ void do_cmds(char ***cmds, int n) {
                 close(pipefd[j][1]);
             }
             if (execvp(cmds[i][0], cmds[i]) < 0) {
-                free_3_arr(cmds);
+                free_arr(cmds);
                 perror("exec failed");
                       close(fd1);
                       close(fd2);
@@ -324,15 +307,15 @@ void do_cmds(char ***cmds, int n) {
         }
     }
     if (bckrgnd) {
-      n--;
-      bckrgnd = 0;
+        n--;
+        bckrgnd = 0;
     }
     for (int i = 0; i < n; i ++) {
-      if (i != n - 1) {
-        close(pipefd[i][0]);
-        close(pipefd[i][1]);
-      }
-      wait(NULL);
+        if (i != n - 1) {
+            close(pipefd[i][0]);
+            close(pipefd[i][1]);
+        }
+        wait(NULL);
     }
     if (fd1 != 0 && fd1 != 1) {
         close(fd1);
@@ -343,10 +326,13 @@ void do_cmds(char ***cmds, int n) {
 }
 
 void sl1() {
-    if(pid != 0) {
+    if (pid != 0) {
         kill(SIGINT, pid);
         wait(NULL);
     }
+    putchar('\n');
+    print();
+    pid = 0;
 }
 
 int main(void) {
@@ -357,21 +343,20 @@ int main(void) {
         print();
         cmds = get_cmds(&n);
         if (n == -1) {
-          continue;
-        }
-        if (cmds[0] == NULL || cmds[0][0] == NULL) {
-            free_3_arr(cmds);
+            free(cmds);
             continue;
-//            perror("something went wrong");
-//            return 1;
+        }
+        if (cmds == NULL || cmds[0] == NULL || cmds[0][0] == NULL) {
+            free_arr(cmds);
+            continue;
         }
         if (strcmp(cmds[0][0], "quit") == 0 ||
             strcmp(cmds[0][0], "exit") == 0) {
-            free_3_arr(cmds);
+            free_arr(cmds);
             break;
         }
         do_cmds(cmds, n);
-        free_3_arr(cmds);
+        free_arr(cmds);
     }
     return 0;
 }
